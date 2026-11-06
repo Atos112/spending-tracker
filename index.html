@@ -15,6 +15,7 @@ label{display:block;font-size:13px;font-weight:600;margin:12px 0 4px}
 input,select,button{font:inherit;padding:11px;border:1px solid #cbd5e1;border-radius:8px;width:100%;background:#fff}
 button{background:#0f766e;color:#fff;border:0;font-weight:600}button.sec{background:#e2e8f0;color:#111}button.red{background:#b91c1c}
 .row{display:flex;gap:8px}.row>*{flex:1}.row>button{flex:0 0 80px}
+.lnk{color:#2563eb;font-size:13px;display:inline-block;margin-top:6px;text-decoration:underline}
 .card{background:#fff;border-radius:10px;padding:10px 12px;margin:8px 0;font-size:14px}
 .card .top{display:flex;justify-content:space-between;font-weight:700}
 .badge{background:#f59e0b;color:#fff;border-radius:6px;padding:1px 6px;font-size:11px}
@@ -35,11 +36,27 @@ nav button{background:none;color:#475569;border-radius:0;border:0;padding:16px 0
   <input id="amount" inputmode="decimal" placeholder="0,00">
   <label>Object</label>
   <input id="object" placeholder="What was it?">
+
   <label>Location</label>
-  <div class="row"><input id="location" list="dl-loc" placeholder="Type or pick"><button class="sec" id="saveLoc" type="button">Save</button></div>
+  <div id="bsLoc">
+    <select id="pickLoc"></select>
+    <a href="#" class="lnk" data-k="locations" data-m="1">Type a new one</a>
+  </div>
+  <div id="btLoc" style="display:none">
+    <div class="row"><input id="location" placeholder="Type new location"><button class="sec" id="saveLoc" type="button">Save</button></div>
+    <a href="#" class="lnk" data-k="locations" data-m="0">Pick a saved one instead</a>
+  </div>
+
   <label>Third party</label>
-  <div class="row"><input id="third" list="dl-third" placeholder="Type or pick"><button class="sec" id="saveThird" type="button">Save</button></div>
-  <datalist id="dl-loc"></datalist><datalist id="dl-third"></datalist>
+  <div id="bsThird">
+    <select id="pickThird"></select>
+    <a href="#" class="lnk" data-k="thirdParties" data-m="1">Type a new one</a>
+  </div>
+  <div id="btThird" style="display:none">
+    <div class="row"><input id="third" placeholder="Type new third party"><button class="sec" id="saveThird" type="button">Save</button></div>
+    <a href="#" class="lnk" data-k="thirdParties" data-m="0">Pick a saved one instead</a>
+  </div>
+
   <label>Waste (MAD)</label>
   <input id="waste" inputmode="decimal" placeholder="0,00">
   <label>Receipt (one per entry)</label>
@@ -128,14 +145,48 @@ async function api(action,payload){
   return r.json();
 }
 
-/* ---------- input form ---------- */
-function fillLists(){
-  $('#dl-loc').innerHTML=lists.locations.map(x=>`<option value="${esc(x)}">`).join('');
-  $('#dl-third').innerHTML=lists.thirdParties.map(x=>`<option value="${esc(x)}">`).join('');
+/* ---------- location / third party fields ---------- */
+const F={
+  locations:{sel:'#pickLoc',inp:'#location',bs:'#bsLoc',bt:'#btLoc',label:'location'},
+  thirdParties:{sel:'#pickThird',inp:'#third',bs:'#bsThird',bt:'#btThird',label:'third party'}
+};
+function mode(k,typing){const f=F[k];$(f.bs).style.display=typing?'none':'block';$(f.bt).style.display=typing?'block':'none'}
+function fval(k){const f=F[k];return ($(f.bt).style.display==='block'?$(f.inp).value:$(f.sel).value).trim()}
+function setFval(k,v){
+  const f=F[k];v=v||'';
+  if(!v||lists[k].includes(v)){$(f.sel).value=v;$(f.inp).value='';mode(k,false)}
+  else{$(f.inp).value=v;mode(k,true)}
 }
+function fillLists(){
+  for(const k in F){
+    const f=F[k],cur=$(f.sel).value;
+    $(f.sel).innerHTML=`<option value="">Pick saved ${f.label}...</option>`+
+      lists[k].map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join('');
+    $(f.sel).value=cur;
+  }
+}
+async function saveListValue(k){
+  const v=$(F[k].inp).value.trim();if(!v)return;
+  if(!lists[k].includes(v)){lists[k].push(v);lists[k].sort();S('lists',lists);localStorage.listsDirty='1';fillLists();pushLists();}
+  setFval(k,v);toast('Saved');
+}
+$('#saveLoc').onclick=()=>saveListValue('locations');
+$('#saveThird').onclick=()=>saveListValue('thirdParties');
+document.addEventListener('click',e=>{
+  const a=e.target.closest('a.lnk');if(!a)return;e.preventDefault();
+  const typing=a.dataset.m==='1';mode(a.dataset.k,typing);
+  if(typing)$(F[a.dataset.k].inp).focus();
+});
+async function pushLists(){
+  if(!navigator.onLine||!localStorage.url)return;
+  try{const r=await api('saveLists',{lists});if(r.ok)localStorage.removeItem('listsDirty')}catch{}
+}
+
+/* ---------- input form ---------- */
 function resetForm(){
   const d=new Date();$('#date').value=iso(d);$('#dayLabel').textContent='('+dayName(iso(d))+')';
-  ['amount','object','location','third','waste'].forEach(i=>$('#'+i).value='');
+  ['amount','object','waste'].forEach(i=>$('#'+i).value='');
+  setFval('locations','');setFval('thirdParties','');
   receipt=null;editId=null;editRemote=false;editFile='';showReceipt();
   $('#validate').textContent='Validate';$('#cancelEdit').style.display='none';$('#err').textContent='';
 }
@@ -144,17 +195,6 @@ $('#cancelEdit').onclick=resetForm;
 function showReceipt(){
   $('#rcpt').innerHTML=receipt?`Attached: ${esc(receipt.label)} <a href="#" id="rmR">remove</a>`:(editFile?'Existing receipt kept':'No receipt');
   const rm=$('#rmR');if(rm)rm.onclick=e=>{e.preventDefault();receipt=null;showReceipt()};
-}
-async function saveListValue(kind,inputId){
-  const v=$('#'+inputId).value.trim();if(!v)return;
-  if(!lists[kind].includes(v)){lists[kind].push(v);lists[kind].sort();S('lists',lists);localStorage.listsDirty='1';fillLists();pushLists();}
-  toast('Saved');
-}
-$('#saveLoc').onclick=()=>saveListValue('locations','location');
-$('#saveThird').onclick=()=>saveListValue('thirdParties','third');
-async function pushLists(){
-  if(!navigator.onLine||!localStorage.url)return;
-  try{const r=await api('saveLists',{lists});if(r.ok)localStorage.removeItem('listsDirty')}catch{}
 }
 
 $('#btnCam').onclick=()=>$('#fCam').click();
@@ -189,7 +229,7 @@ $('#validate').onclick=async()=>{
   if(!isFinite(waste)||waste<0)return err('Enter a valid waste value.');
   if(waste>amount)return err('Waste cannot be more than Amount.');
   const rec={id:editId||crypto.randomUUID(),op:'upsert',remote:editRemote,date,amount,object,
-    location:$('#location').value.trim(),thirdParty:$('#third').value.trim(),waste,receipt,file:editFile};
+    location:fval('locations'),thirdParty:fval('thirdParties'),waste,receipt,file:editFile};
   await putP(rec);resetForm();toast('Saved as pending');refreshBanner();syncNow();
 };
 
@@ -247,7 +287,7 @@ $('#list').onclick=async e=>{
     editId=r.id;editRemote=!!r.remote;editFile=r.file||'';receipt=r.receipt||null;
     $('#date').value=r.date;$('#dayLabel').textContent='('+dayName(r.date)+')';
     $('#amount').value=String(r.amount).replace('.',',');$('#object').value=r.object;
-    $('#location').value=r.location||'';$('#third').value=r.thirdParty||'';
+    setFval('locations',r.location);setFval('thirdParties',r.thirdParty);
     $('#waste').value=String(r.waste||0).replace('.',',');
     showReceipt();$('#validate').textContent='Save changes';$('#cancelEdit').style.display='block';goTab('input');
   }
