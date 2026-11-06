@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0f766e">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<title>Spending Tracker</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,sans-serif;background:#f3f4f6;color:#111;padding-bottom:70px}
+header{background:#0f766e;color:#fff;padding:14px 16px;font-weight:700;font-size:18px;display:flex;justify-content:space-between}
+#banner{display:none;background:#b91c1c;color:#fff;padding:10px 16px;font-size:14px}
+section{display:none;padding:14px}section.on{display:block}
+label{display:block;font-size:13px;font-weight:600;margin:12px 0 4px}
+input,select,button{font:inherit;padding:11px;border:1px solid #cbd5e1;border-radius:8px;width:100%;background:#fff}
+button{background:#0f766e;color:#fff;border:0;font-weight:600}button.sec{background:#e2e8f0;color:#111}button.red{background:#b91c1c}
+.row{display:flex;gap:8px}.row>*{flex:1}.row>button{flex:0 0 80px}
+.card{background:#fff;border-radius:10px;padding:10px 12px;margin:8px 0;font-size:14px}
+.card .top{display:flex;justify-content:space-between;font-weight:700}
+.badge{background:#f59e0b;color:#fff;border-radius:6px;padding:1px 6px;font-size:11px}
+.tot{background:#ccfbf1;border-radius:10px;padding:10px;margin:10px 0;font-weight:700}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:#fff;border-top:1px solid #cbd5e1}
+nav button{background:none;color:#475569;border-radius:0;border:0;padding:16px 0}nav button.on{color:#0f766e;border-top:3px solid #0f766e}
+.chip{display:inline-block;background:#e2e8f0;border-radius:14px;padding:4px 10px;margin:3px;font-size:13px}
+#toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#111;color:#fff;padding:10px 16px;border-radius:8px;display:none;z-index:9}
+.err{color:#b91c1c;font-size:13px;margin-top:8px}
+</style></head><body>
+<header><span>Spending Tracker</span><span id="net"></span></header>
+<div id="banner"></div>
+
+<section id="tab-input" class="on">
+  <label>Date <span id="dayLabel" style="font-weight:400;color:#475569"></span></label>
+  <input type="date" id="date">
+  <label>Amount (MAD)</label>
+  <input id="amount" inputmode="decimal" placeholder="0,00">
+  <label>Object</label>
+  <input id="object" placeholder="What was it?">
+  <label>Location</label>
+  <div class="row"><input id="location" list="dl-loc" placeholder="Type or pick"><button class="sec" id="saveLoc" type="button">Save</button></div>
+  <label>Third party</label>
+  <div class="row"><input id="third" list="dl-third" placeholder="Type or pick"><button class="sec" id="saveThird" type="button">Save</button></div>
+  <datalist id="dl-loc"></datalist><datalist id="dl-third"></datalist>
+  <label>Waste (MAD)</label>
+  <input id="waste" inputmode="decimal" placeholder="0,00">
+  <label>Receipt (one per entry)</label>
+  <div class="row"><button class="sec" type="button" id="btnCam">Take photo</button><button class="sec" type="button" id="btnUp">Upload</button></div>
+  <input type="file" id="fCam" accept="image/*" capture="environment" hidden>
+  <input type="file" id="fUp" accept="image/*,application/pdf" hidden>
+  <div id="rcpt" style="font-size:13px;margin-top:6px"></div>
+  <div class="err" id="err"></div>
+  <button id="validate" style="margin-top:16px">Validate</button>
+  <button class="sec" id="cancelEdit" style="margin-top:8px;display:none">Cancel edit</button>
+</section>
+
+<section id="tab-history">
+  <label>Range</label>
+  <select id="range">
+    <option value="all">All time</option><option value="yesterday">Yesterday</option><option value="7">Last 7 days</option>
+    <option value="mtd">Current month to date</option><option value="last">Last month</option>
+    <option value="3m">Last 3 months</option><option value="custom">Custom</option>
+  </select>
+  <div class="row" id="customBox" style="display:none;margin-top:8px"><input type="date" id="from"><input type="date" id="to"></div>
+  <div id="histNote" class="err"></div>
+  <div class="tot"><div>Total spending: <span id="totA">0.00 MAD</span></div><div>Total waste: <span id="totW">0.00 MAD</span></div></div>
+  <div class="row"><button class="sec" id="expCsv">Export CSV</button><button class="sec" id="expTxt">Export TXT</button></div>
+  <div id="list"></div>
+</section>
+
+<section id="tab-settings">
+  <label>Apps Script URL</label><input id="setUrl" placeholder="https://script.google.com/macros/s/.../exec">
+  <label>Token</label><input id="setToken" type="password">
+  <button id="saveSet" style="margin-top:10px">Save settings</button>
+  <label>Saved locations</label><div id="chipsLoc"></div>
+  <label>Saved third parties</label><div id="chipsThird"></div>
+  <button id="syncBtn" style="margin-top:16px">Sync now</button>
+  <div id="syncStatus" style="margin-top:10px;font-size:14px"></div>
+</section>
+
+<nav><button data-tab="input" class="on">Input</button><button data-tab="history">History</button><button data-tab="settings">Settings</button></nav>
+<div id="toast"></div>
+
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const J=(k,d)=>{try{return JSON.parse(localStorage.getItem(k))??d}catch{return d}};
+const S=(k,v)=>localStorage.setItem(k,JSON.stringify(v));
+const iso=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const num=v=>parseFloat(String(v).trim().replace(',','.'));
+const dayName=s=>{const[y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d).toLocaleDateString('en-GB',{weekday:'long'})};
+const fmt=n=>n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+' MAD';
+const toast=t=>{const e=$('#toast');e.textContent=t;e.style.display='block';setTimeout(()=>e.style.display='none',2500)};
+
+/* ---------- pending storage (IndexedDB) ---------- */
+const dbp=new Promise((res,rej)=>{const r=indexedDB.open('spend',1);
+  r.onupgradeneeded=()=>r.result.createObjectStore('pending',{keyPath:'id'});
+  r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
+async function tx(mode,fn){const db=await dbp;return new Promise((res,rej)=>{
+  const t=db.transaction('pending',mode);const q=fn(t.objectStore('pending'));
+  t.oncomplete=()=>res(q&&q.result);t.onerror=()=>rej(t.error)})}
+const putP=r=>tx('readwrite',s=>s.put(r));
+const delP=id=>tx('readwrite',s=>s.delete(id));
+const allP=()=>tx('readonly',s=>s.getAll());
+
+/* ---------- state ---------- */
+let lists=J('lists',{locations:[],thirdParties:[]});
+let editId=null,editRemote=false,editFile='',receipt=null,remote=[],offline=false;
+
+/* ---------- tabs ---------- */
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));
+  document.querySelectorAll('section').forEach(s=>s.classList.toggle('on',s.id==='tab-'+b.dataset.tab));
+  if(b.dataset.tab==='history')loadHistory();
+  if(b.dataset.tab==='settings')renderSettings();
+});
+const goTab=n=>document.querySelector(`nav button[data-tab=${n}]`).click();
+
+/* ---------- API ---------- */
+async function api(action,payload){
+  const url=localStorage.url,token=localStorage.token;
+  if(!url||!token)throw new Error('Set URL and token in Settings');
+  if(action==='list'){
+    const r=await fetch(url+'?action=list&token='+encodeURIComponent(token),{redirect:'follow'});
+    return r.json();
+  }
+  const r=await fetch(url,{method:'POST',redirect:'follow',
+    headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body:JSON.stringify({token,action,...payload})});
+  return r.json();
+}
+
+/* ---------- input form ---------- */
+function fillLists(){
+  $('#dl-loc').innerHTML=lists.locations.map(x=>`<option value="${esc(x)}">`).join('');
+  $('#dl-third').innerHTML=lists.thirdParties.map(x=>`<option value="${esc(x)}">`).join('');
+}
+function resetForm(){
+  const d=new Date();$('#date').value=iso(d);$('#dayLabel').textContent='('+dayName(iso(d))+')';
+  ['amount','object','location','third','waste'].forEach(i=>$('#'+i).value='');
+  receipt=null;editId=null;editRemote=false;editFile='';showReceipt();
+  $('#validate').textContent='Validate';$('#cancelEdit').style.display='none';$('#err').textContent='';
+}
+$('#date').onchange=()=>{$('#dayLabel').textContent=$('#date').value?'('+dayName($('#date').value)+')':''};
+$('#cancelEdit').onclick=resetForm;
+function showReceipt(){
+  $('#rcpt').innerHTML=receipt?`Attached: ${esc(receipt.label)} <a href="#" id="rmR">remove</a>`:(editFile?'Existing receipt kept':'No receipt');
+  const rm=$('#rmR');if(rm)rm.onclick=e=>{e.preventDefault();receipt=null;showReceipt()};
+}
+async function saveListValue(kind,inputId){
+  const v=$('#'+inputId).value.trim();if(!v)return;
+  if(!lists[kind].includes(v)){lists[kind].push(v);lists[kind].sort();S('lists',lists);localStorage.listsDirty='1';fillLists();pushLists();}
+  toast('Saved');
+}
+$('#saveLoc').onclick=()=>saveListValue('locations','location');
+$('#saveThird').onclick=()=>saveListValue('thirdParties','third');
+async function pushLists(){
+  if(!navigator.onLine||!localStorage.url)return;
+  try{const r=await api('saveLists',{lists});if(r.ok)localStorage.removeItem('listsDirty')}catch{}
+}
+
+$('#btnCam').onclick=()=>$('#fCam').click();
+$('#btnUp').onclick=()=>$('#fUp').click();
+['fCam','fUp'].forEach(id=>$('#'+id).onchange=async e=>{
+  const f=e.target.files[0];e.target.value='';if(!f)return;
+  try{receipt=await processFile(f);showReceipt()}catch(x){$('#err').textContent=x.message}
+});
+function processFile(f){return new Promise((res,rej)=>{
+  if(f.size>15*1024*1024)return rej(new Error('File too large (max 15 MB)'));
+  if(f.type.startsWith('image/')){
+    const img=new Image();img.onload=()=>{
+      const sc=Math.min(1,1600/Math.max(img.width,img.height));
+      const c=document.createElement('canvas');c.width=img.width*sc;c.height=img.height*sc;
+      c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+      res({data:c.toDataURL('image/jpeg',0.75).split(',')[1],mime:'image/jpeg',ext:'jpg',label:f.name||'photo.jpg'});
+    };img.onerror=()=>rej(new Error('Could not read image'));img.src=URL.createObjectURL(f);
+  }else{
+    const r=new FileReader();r.onload=()=>res({data:r.result.split(',')[1],mime:f.type||'application/octet-stream',
+      ext:(f.name.split('.').pop()||'bin').toLowerCase(),label:f.name});
+    r.onerror=()=>rej(new Error('Could not read file'));r.readAsDataURL(f);
+  }})}
+
+$('#validate').onclick=async()=>{
+  const err=m=>{$('#err').textContent=m};
+  const date=$('#date').value,object=$('#object').value.trim();
+  const amount=num($('#amount').value);
+  const wRaw=$('#waste').value.trim(),waste=wRaw===''?0:num(wRaw);
+  if(!date)return err('Pick a date.');
+  if(!isFinite(amount)||amount<0)return err('Enter a valid amount.');
+  if(!object)return err('Enter an object.');
+  if(!isFinite(waste)||waste<0)return err('Enter a valid waste value.');
+  if(waste>amount)return err('Waste cannot be more than Amount.');
+  const rec={id:editId||crypto.randomUUID(),op:'upsert',remote:editRemote,date,amount,object,
+    location:$('#location').value.trim(),thirdParty:$('#third').value.trim(),waste,receipt,file:editFile};
+  await putP(rec);resetForm();toast('Saved as pending');refreshBanner();syncNow();
+};
+
+/* ---------- history ---------- */
+async function loadHistory(){
+  offline=false;
+  if(navigator.onLine&&localStorage.url){
+    try{const r=await api('list');if(!r.ok)throw new Error(r.error);
+      remote=r.entries.map(e=>({...e,remote:true}));
+      if(!localStorage.listsDirty){lists=r.lists;S('lists',lists);fillLists()}
+    }catch(e){offline=true;remote=[]}
+  }else{offline=true;remote=[]}
+  renderHistory();
+}
+function viewData(){
+  return allP().then(p=>{
+    const m=new Map(remote.map(r=>[r.id,r]));
+    p.forEach(r=>{if(r.op==='delete')m.delete(r.id);else m.set(r.id,{...r,pending:true})});
+    return [...m.values()].sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
+  });
+}
+function getRange(){
+  const v=$('#range').value,t=new Date(),y=t.getFullYear(),m=t.getMonth(),d=t.getDate();
+  if(v==='yesterday'){const x=iso(new Date(y,m,d-1));return[x,x]}
+  if(v==='7')return[iso(new Date(y,m,d-6)),iso(t)];
+  if(v==='mtd')return[iso(new Date(y,m,1)),iso(t)];
+  if(v==='last')return[iso(new Date(y,m-1,1)),iso(new Date(y,m,0))];
+  if(v==='3m')return[iso(new Date(y,m-3,d)),iso(t)];
+  if(v==='custom')return[$('#from').value||'0000-00-00',$('#to').value||'9999-99-99'];
+  return['0000-00-00','9999-99-99'];
+}
+let view=[];
+async function renderHistory(){
+  $('#customBox').style.display=$('#range').value==='custom'?'flex':'none';
+  $('#histNote').textContent=offline?'Offline or not connected: showing pending entries only. Synced history is unavailable.':'';
+  const[a,b]=getRange();
+  view=(await viewData()).filter(r=>r.date>=a&&r.date<=b);
+  $('#totA').textContent=fmt(view.reduce((s,r)=>s+r.amount,0));
+  $('#totW').textContent=fmt(view.reduce((s,r)=>s+(r.waste||0),0));
+  $('#list').innerHTML=view.map(r=>`<div class="card"><div class="top"><span>${esc(r.date)} ${esc(dayName(r.date))}</span><span>${fmt(r.amount)}</span></div>
+    <div>${esc(r.object)} ${r.pending?'<span class="badge">pending</span>':''}</div>
+    <div style="color:#475569">${esc(r.location||'-')} / ${esc(r.thirdParty||'-')} / waste ${fmt(r.waste||0)}</div>
+    ${r.file?`<a href="${esc(r.file)}" target="_blank" rel="noopener">Receipt</a>`:(r.receipt?'Receipt attached':'')}
+    <div class="row" style="margin-top:8px"><button class="sec" data-act="edit" data-id="${esc(r.id)}">Edit</button><button class="red" data-act="del" data-id="${esc(r.id)}">Delete</button></div></div>`).join('')||'<p>No entries.</p>';
+}
+['range','from','to'].forEach(i=>$('#'+i).onchange=renderHistory);
+$('#list').onclick=async e=>{
+  const b=e.target.closest('button');if(!b)return;
+  const r=view.find(x=>x.id===b.dataset.id);if(!r)return;
+  if(b.dataset.act==='del'){
+    if(!confirm('Delete this entry?'))return;
+    if(r.remote)await putP({id:r.id,op:'delete',remote:true});else await delP(r.id);
+    remote=remote.filter(x=>x.id!==r.id||r.pending);renderHistory();refreshBanner();syncNow();
+  }else{
+    editId=r.id;editRemote=!!r.remote;editFile=r.file||'';receipt=r.receipt||null;
+    $('#date').value=r.date;$('#dayLabel').textContent='('+dayName(r.date)+')';
+    $('#amount').value=String(r.amount).replace('.',',');$('#object').value=r.object;
+    $('#location').value=r.location||'';$('#third').value=r.thirdParty||'';
+    $('#waste').value=String(r.waste||0).replace('.',',');
+    showReceipt();$('#validate').textContent='Save changes';$('#cancelEdit').style.display='block';goTab('input');
+  }
+};
+
+/* ---------- export ---------- */
+function download(name,text,mime){const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([text],{type:mime}));a.download=name;a.click()}
+const cols=r=>[dayName(r.date),r.date,r.amount.toFixed(2),r.object,r.location||'',r.thirdParty||'',(r.waste||0).toFixed(2),r.file||''];
+$('#expCsv').onclick=()=>{
+  const q=v=>'"'+String(v).replace(/"/g,'""')+'"';
+  const rows=[['Day','Date','Amount','Object','Location','Third Party','Waste','File'],...view.map(cols)];
+  download('spending.csv','\ufeff'+rows.map(r=>r.map(q).join(',')).join('\r\n'),'text/csv');
+};
+$('#expTxt').onclick=()=>{
+  const t=view.map(r=>cols(r).join(' | ')).join('\n')+`\n\nTotal spending: ${fmt(view.reduce((s,r)=>s+r.amount,0))}\nTotal waste: ${fmt(view.reduce((s,r)=>s+(r.waste||0),0))}\n`;
+  download('spending.txt',t,'text/plain');
+};
+
+/* ---------- sync ---------- */
+let syncing=false;
+async function syncNow(manual){
+  if(syncing)return;
+  if(!navigator.onLine){if(manual)toast('You are offline');return}
+  if(!localStorage.url||!localStorage.token){if(manual)toast('Set URL and token first');return}
+  syncing=true;
+  try{
+    if(localStorage.listsDirty)await pushLists();
+    const p=await allP();
+    for(const rec of p){
+      const r=await api(rec.op,{entry:rec});
+      if(!r.ok)throw new Error(r.error||'Sync failed');
+      await delP(rec.id);
+    }
+    localStorage.lastSync=new Date().toISOString();localStorage.lastErr='';
+  }catch(e){localStorage.lastErr=e.message||String(e)}
+  syncing=false;refreshBanner();renderSettings();
+  if($('#tab-history').classList.contains('on'))loadHistory();
+}
+async function refreshBanner(){
+  const n=(await allP()).length,b=$('#banner');
+  b.style.display=n?'block':'none';
+  b.textContent=`Warning: ${n} unsynced ${n===1?'entry':'entries'}. Do not uninstall the app or clear its data until they sync.`;
+  $('#net').textContent=navigator.onLine?'online':'offline';
+}
+async function renderSettings(){
+  $('#setUrl').value=localStorage.url||'';$('#setToken').value=localStorage.token||'';
+  const n=(await allP()).length;
+  $('#syncStatus').textContent=`Pending: ${n}. Last sync: ${localStorage.lastSync?new Date(localStorage.lastSync).toLocaleString():'never'}.`+(localStorage.lastErr?` Last error: ${localStorage.lastErr}`:'');
+  const chips=(k)=>lists[k].map((x,i)=>`<span class="chip">${esc(x)} <a href="#" data-k="${k}" data-i="${i}">x</a></span>`).join('')||'None yet';
+  $('#chipsLoc').innerHTML=chips('locations');$('#chipsThird').innerHTML=chips('thirdParties');
+}
+document.addEventListener('click',e=>{
+  const a=e.target.closest('.chip a');if(!a)return;e.preventDefault();
+  lists[a.dataset.k].splice(+a.dataset.i,1);S('lists',lists);localStorage.listsDirty='1';
+  fillLists();renderSettings();pushLists();
+});
+$('#saveSet').onclick=()=>{localStorage.url=$('#setUrl').value.trim();localStorage.token=$('#setToken').value.trim();toast('Settings saved');syncNow(true)};
+$('#syncBtn').onclick=()=>syncNow(true);
+window.addEventListener('online',()=>{refreshBanner();syncNow()});
+window.addEventListener('offline',refreshBanner);
+
+/* ---------- start ---------- */
+fillLists();resetForm();refreshBanner();renderSettings();
+if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js');
+if(!localStorage.url)goTab('settings');else syncNow();
+</script></body></html>
