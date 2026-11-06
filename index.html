@@ -201,22 +201,23 @@ $('#btnCam').onclick=()=>$('#fCam').click();
 $('#btnUp').onclick=()=>$('#fUp').click();
 ['fCam','fUp'].forEach(id=>$('#'+id).onchange=async e=>{
   const f=e.target.files[0];e.target.value='';if(!f)return;
-  try{receipt=await processFile(f);showReceipt()}catch(x){$('#err').textContent=x.message}
+  $('#err').textContent='';$('#rcpt').textContent='Processing photo...';
+  try{receipt=await processFile(f)}catch(x){$('#err').textContent=x.message}
+  showReceipt();
 });
-function processFile(f){return new Promise((res,rej)=>{
-  if(f.size>15*1024*1024)return rej(new Error('File too large (max 15 MB)'));
+const b64=blob=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=()=>rej(new Error('Could not read file'));r.readAsDataURL(blob)});
+async function processFile(f){
   if(f.type.startsWith('image/')){
-    const img=new Image();img.onload=()=>{
-      const sc=Math.min(1,1600/Math.max(img.width,img.height));
-      const c=document.createElement('canvas');c.width=img.width*sc;c.height=img.height*sc;
-      c.getContext('2d').drawImage(img,0,0,c.width,c.height);
-      res({data:c.toDataURL('image/jpeg',0.75).split(',')[1],mime:'image/jpeg',ext:'jpg',label:f.name||'photo.jpg'});
-    };img.onerror=()=>rej(new Error('Could not read image'));img.src=URL.createObjectURL(f);
-  }else{
-    const r=new FileReader();r.onload=()=>res({data:r.result.split(',')[1],mime:f.type||'application/octet-stream',
-      ext:(f.name.split('.').pop()||'bin').toLowerCase(),label:f.name});
-    r.onerror=()=>rej(new Error('Could not read file'));r.readAsDataURL(f);
-  }})}
+    if(f.size>40*1024*1024)throw new Error('Image too large (max 40 MB)');
+    const bmp=await createImageBitmap(f,{resizeWidth:1280,resizeQuality:'medium'});
+    const c=document.createElement('canvas');c.width=bmp.width;c.height=bmp.height;
+    c.getContext('2d').drawImage(bmp,0,0);
+    const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',0.7));
+    return {data:await b64(blob),mime:'image/jpeg',ext:'jpg',label:f.name||'photo.jpg'};
+  }
+  if(f.size>15*1024*1024)throw new Error('File too large (max 15 MB)');
+  return {data:await b64(f),mime:f.type||'application/octet-stream',ext:(f.name.split('.').pop()||'bin').toLowerCase(),label:f.name};
+}
 
 $('#validate').onclick=async()=>{
   const err=m=>{$('#err').textContent=m};
