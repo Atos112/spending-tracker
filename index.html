@@ -25,9 +25,11 @@ button:disabled{opacity:.6}
 nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:#fff;border-top:1px solid #cbd5e1}
 nav button{background:none;color:#475569;border-radius:0;border:0;padding:16px 0}nav button.on{color:#0f766e;border-top:3px solid #0f766e}
 .chip{display:inline-block;background:#e2e8f0;border-radius:14px;padding:4px 10px;margin:3px;font-size:13px}
-#toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#111;color:#fff;padding:10px 16px;border-radius:8px;display:none;z-index:9}
+#toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#111;color:#fff;padding:10px 16px;border-radius:8px;display:none;z-index:90}
 .err{color:#b91c1c;font-size:13px;margin-top:8px}
 .adm{background:#fff;border-radius:10px;padding:10px 12px;margin-top:16px}
+#pinDlg{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:50;display:none;align-items:center;justify-content:center;padding:24px}
+#pinDlg .box{background:#fff;border-radius:12px;padding:16px;width:100%;max-width:320px}
 #lock{position:fixed;inset:0;background:#0f766e;z-index:100;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;gap:12px;color:#fff}
 #lock input{width:220px;text-align:center;font-size:24px;letter-spacing:8px}
 #lock button{width:220px;background:#fff;color:#0f766e}
@@ -98,21 +100,13 @@ nav button{background:none;color:#475569;border-radius:0;border:0;padding:16px 0
   <button id="saveSet" style="margin-top:10px">Save settings</button>
 
   <div class="adm">
-    <b>Admin mode</b>
-    <div id="adminStatus" style="font-size:14px;margin:6px 0"></div>
-    <div class="row"><input id="adminPin" type="password" inputmode="numeric" maxlength="4" placeholder="4-digit PIN"><button id="adminUnlock" type="button">Unlock</button></div>
-    <button class="sec" id="adminLock" type="button" style="margin-top:8px;display:none">Lock now</button>
-    <div id="adminMsg" class="err"></div>
-  </div>
-
-  <div class="adm">
     <b>App lock</b>
     <div class="row" style="margin-top:8px"><input id="oldPin" type="password" inputmode="numeric" maxlength="4" placeholder="Current PIN"><input id="newPin" type="password" inputmode="numeric" maxlength="4" placeholder="New PIN"></div>
     <button class="sec" id="chgPin" type="button" style="margin-top:8px">Change app PIN</button>
     <div id="chgMsg" class="err"></div>
   </div>
 
-  <label>Saved locations <span style="font-weight:400;color:#475569">(unlock admin mode to remove)</span></label><div id="chipsLoc"></div>
+  <label>Saved locations <span style="font-weight:400;color:#475569">(removing one asks for the admin PIN)</span></label><div id="chipsLoc"></div>
   <label>Saved third parties</label><div id="chipsThird"></div>
   <button id="syncBtn" style="margin-top:16px">Sync now</button>
   <div id="syncStatus" style="margin-top:10px;font-size:14px"></div>
@@ -120,6 +114,13 @@ nav button{background:none;color:#475569;border-radius:0;border:0;padding:16px 0
 
 <nav><button data-tab="input" class="on">Input</button><button data-tab="history">History</button><button data-tab="settings">Settings</button></nav>
 <div id="toast"></div>
+
+<div id="pinDlg"><div class="box">
+  <div id="pinDlgTitle" style="font-weight:700;margin-bottom:10px"></div>
+  <input id="pinDlgIn" type="password" inputmode="numeric" maxlength="4" placeholder="4-digit admin PIN" autocomplete="off">
+  <div id="pinDlgMsg" class="err"></div>
+  <div class="row" style="margin-top:12px"><button class="sec" id="pinCancel" type="button" style="flex:1">Cancel</button><button id="pinOk" type="button" style="flex:1">Confirm</button></div>
+</div></div>
 
 <div id="lock">
   <div style="font-size:22px;font-weight:700">Spending Tracker</div>
@@ -155,7 +156,7 @@ const allP=()=>tx('readonly',s=>s.getAll());
 
 /* ---------- state ---------- */
 let lists=J('lists',{locations:[],thirdParties:[]});
-let editId=null,editRemote=false,editFile='',receipt=null,remote=[],offline=false,histLoaded=false;
+let editId=null,editRemote=false,editFile='',editPin='',receipt=null,remote=[],offline=false,histLoaded=false;
 
 /* ---------- app lock (PIN checked on the phone) ---------- */
 async function hashPin(pin,salt){
@@ -169,7 +170,6 @@ function showLock(){
   $('#lockPin2').style.display=setup?'block':'none';
   $('#lockHelp').style.display=setup?'none':'block';
   $('#lockPin').value='';$('#lockPin2').value='';$('#lockMsg').textContent='';
-  lockAdmin();
   setTimeout(()=>$('#lockPin').focus(),100);
 }
 $('#lockGo').onclick=async()=>{
@@ -205,36 +205,25 @@ $('#chgPin').onclick=async()=>{
   $('#oldPin').value='';$('#newPin').value='';m.textContent='';toast('App PIN changed');
 };
 
-/* ---------- admin mode (PIN kept in memory only) ---------- */
-let adminPin='',adminUntil=0;
-const isAdmin=()=>!!adminPin&&Date.now()<adminUntil;
-function updateAdminStatus(){
-  const on=isAdmin();
-  if(on){const s=Math.max(0,Math.ceil((adminUntil-Date.now())/1000));
-    $('#adminStatus').textContent=`Unlocked - ${Math.floor(s/60)}:${String(s%60).padStart(2,'0')} left`;}
-  else $('#adminStatus').textContent='Locked';
-  $('#adminLock').style.display=on?'block':'none';
-}
-function adminChanged(){
-  updateAdminStatus();renderChips();
-  if($('#tab-history').classList.contains('on'))renderHistory();
-}
-function lockAdmin(){adminPin='';adminUntil=0;adminChanged()}
-setInterval(()=>{
-  if(adminPin&&Date.now()>=adminUntil)lockAdmin();else updateAdminStatus();
-},1000);
-$('#adminLock').onclick=lockAdmin;
-$('#adminUnlock').onclick=async()=>{
-  const pin=$('#adminPin').value.trim(),msg=$('#adminMsg');
-  if(!/^\d{4}$/.test(pin)){msg.textContent='Enter the 4-digit PIN.';return}
-  if(!navigator.onLine){msg.textContent='Go online to unlock admin mode.';return}
-  msg.textContent='Checking...';
-  try{
-    const r=await api('verifyPin',{pin});
-    if(r.ok){adminPin=pin;adminUntil=Date.now()+3*60*1000;$('#adminPin').value='';msg.textContent='';adminChanged();syncNow()}
-    else msg.textContent=r.error||'Could not unlock.';
-  }catch(e){msg.textContent='Could not reach the server.'}
-};
+/* ---------- admin PIN prompt (checked by the script) ---------- */
+function askPin(title){return new Promise(res=>{
+  const d=$('#pinDlg'),i=$('#pinDlgIn'),m=$('#pinDlgMsg');
+  $('#pinDlgTitle').textContent=title;i.value='';m.textContent='';d.style.display='flex';
+  setTimeout(()=>i.focus(),100);
+  const close=v=>{d.style.display='none';$('#pinOk').onclick=null;$('#pinCancel').onclick=null;i.onkeydown=null;res(v)};
+  i.onkeydown=e=>{if(e.key==='Enter')$('#pinOk').click()};
+  $('#pinCancel').onclick=()=>close(null);
+  $('#pinOk').onclick=async()=>{
+    const p=i.value.trim();
+    if(!/^\d{4}$/.test(p)){m.textContent='Enter 4 digits.';return}
+    if(!navigator.onLine){m.textContent='Go online to confirm the PIN.';return}
+    m.textContent='Checking...';
+    try{
+      const r=await api('verifyPin',{pin:p});
+      if(r.ok)close(p);else m.textContent=r.error||'Wrong PIN.';
+    }catch(e){m.textContent='Could not reach the server.'}
+  };
+})}
 
 /* ---------- tabs ---------- */
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
@@ -255,7 +244,7 @@ async function api(action,payload){
   }
   const r=await fetch(url,{method:'POST',redirect:'follow',
     headers:{'Content-Type':'text/plain;charset=utf-8'},
-    body:JSON.stringify({token,pin:isAdmin()?adminPin:'',action,...payload})});
+    body:JSON.stringify({token,action,...payload})});
   return r.json();
 }
 
@@ -291,9 +280,9 @@ document.addEventListener('click',e=>{
   const typing=a.dataset.m==='1';mode(a.dataset.k,typing);
   if(typing)$(F[a.dataset.k].inp).focus();
 });
-async function pushLists(){
+async function pushLists(pin){
   if(!navigator.onLine||!localStorage.url)return;
-  try{const r=await api('saveLists',{lists});if(r.ok)localStorage.removeItem('listsDirty')}catch{}
+  try{const r=await api('saveLists',{lists,pin:pin||''});if(r.ok)localStorage.removeItem('listsDirty')}catch{}
 }
 
 /* ---------- input form ---------- */
@@ -301,7 +290,7 @@ function resetForm(){
   const d=new Date();$('#date').value=iso(d);$('#dayLabel').textContent='('+dayName(iso(d))+')';
   ['amount','object','waste'].forEach(i=>$('#'+i).value='');
   setFval('locations','');setFval('thirdParties','');
-  receipt=null;editId=null;editRemote=false;editFile='';showReceipt();
+  receipt=null;editId=null;editRemote=false;editFile='';editPin='';showReceipt();
   $('#validate').textContent='Validate';$('#cancelEdit').style.display='none';$('#err').textContent='';
 }
 $('#date').onchange=()=>{$('#dayLabel').textContent=$('#date').value?'('+dayName($('#date').value)+')':''};
@@ -335,7 +324,7 @@ async function processFile(f){
 
 $('#validate').onclick=async()=>{
   const err=m=>{$('#err').textContent=m};
-  if(editRemote&&!isAdmin())return err('Admin mode is locked. Unlock it in Settings, then come back and tap Save changes.');
+  if(editRemote&&!editPin)return err('Tap Edit on the entry again to enter the admin PIN.');
   const date=$('#date').value,object=$('#object').value.trim();
   const amount=num($('#amount').value);
   const wRaw=$('#waste').value.trim(),waste=wRaw===''?0:num(wRaw);
@@ -344,7 +333,7 @@ $('#validate').onclick=async()=>{
   if(!object)return err('Enter an object.');
   if(!isFinite(waste)||waste<0)return err('Enter a valid waste value.');
   if(waste>amount)return err('Waste cannot be more than Amount.');
-  const rec={id:editId||crypto.randomUUID(),op:'upsert',remote:editRemote,date,amount,object,
+  const rec={id:editId||crypto.randomUUID(),op:'upsert',remote:editRemote,pin:editPin,date,amount,object,
     location:fval('locations'),thirdParty:fval('thirdParties'),waste,receipt,file:editFile};
   await putP(rec);resetForm();toast('Saved as pending');refreshBanner();syncNow();
 };
@@ -392,8 +381,7 @@ async function renderHistory(){
   }
   $('#expRow').style.display='flex';
   $('#histNote').textContent=offline?'Offline or not connected: showing pending entries only. Synced history is unavailable.':'';
-  const adm=isAdmin();
-  $('#admNote').textContent=adm?'':'Note: editing or deleting saved entries requires admin mode (activate it in Settings).';
+  $('#admNote').textContent='Note: editing or deleting saved entries asks for the admin PIN.';
   const[a,b]=getRange();
   view=(await viewData()).filter(r=>r.date>=a&&r.date<=b);
   $('#totA').textContent=fmt(view.reduce((s,r)=>s+r.amount,0));
@@ -409,13 +397,18 @@ async function renderHistory(){
 $('#list').onclick=async e=>{
   const b=e.target.closest('button');if(!b)return;
   const r=view.find(x=>x.id===b.dataset.id);if(!r)return;
-  if(r.remote&&!isAdmin()){toast('Requires admin mode. Activate it in Settings.');return}
-  if(b.dataset.act==='del'){
-    if(!confirm('Delete this entry?'))return;
-    if(r.remote)await putP({id:r.id,op:'delete',remote:true});else await delP(r.id);
+  const del=b.dataset.act==='del';
+  if(del&&!confirm('Delete this entry?'))return;
+  let pin='';
+  if(r.remote){
+    pin=await askPin(del?'Enter the admin PIN to delete this entry':'Enter the admin PIN to edit this entry');
+    if(!pin)return;
+  }
+  if(del){
+    if(r.remote)await putP({id:r.id,op:'delete',remote:true,pin});else await delP(r.id);
     remote=remote.filter(x=>x.id!==r.id||r.pending);renderHistory();refreshBanner();syncNow();
   }else{
-    editId=r.id;editRemote=!!r.remote;editFile=r.file||'';receipt=r.receipt||null;
+    editId=r.id;editRemote=!!r.remote;editPin=pin;editFile=r.file||'';receipt=r.receipt||null;
     $('#date').value=r.date;$('#dayLabel').textContent='('+dayName(r.date)+')';
     $('#amount').value=String(r.amount).replace('.',',');$('#object').value=r.object;
     setFval('locations',r.location);setFval('thirdParties',r.thirdParty);
@@ -450,13 +443,13 @@ async function syncNow(manual){
     const p=await allP();
     let blocked='';
     for(const rec of p){
-      const r=await api(rec.op,{entry:rec});
+      const r=await api(rec.op,{entry:rec,pin:rec.pin||''});
       if(r.ok){await delP(rec.id);continue}
-      if(r.code==='pin'||r.code==='locked'){blocked=r.error||'Admin PIN needed';continue}
+      if(r.code==='pin'||r.code==='locked'){blocked=r.error||'PIN rejected';await delP(rec.id);continue}
       throw new Error(r.error||'Sync failed');
     }
     localStorage.lastSync=new Date().toISOString();
-    localStorage.lastErr=blocked?blocked+'. Unlock admin mode in Settings to finish syncing.':'';
+    localStorage.lastErr=blocked?'A change was not applied ('+blocked+'). Please repeat it.':'';
   }catch(e){localStorage.lastErr=e.message||String(e)}
   syncing=false;refreshBanner();renderSettings();
   if($('#tab-history').classList.contains('on')&&histLoaded)loadHistory();
@@ -470,21 +463,21 @@ async function refreshBanner(){
   $('#net').classList.toggle('off',!on);
 }
 function renderChips(){
-  const adm=isAdmin();
-  const chips=(k)=>lists[k].map((x,i)=>`<span class="chip">${esc(x)}${adm?` <a href="#" data-k="${k}" data-i="${i}">x</a>`:''}</span>`).join('')||'None yet';
+  const chips=(k)=>lists[k].map((x,i)=>`<span class="chip">${esc(x)} <a href="#" data-k="${k}" data-i="${i}">x</a></span>`).join('')||'None yet';
   $('#chipsLoc').innerHTML=chips('locations');$('#chipsThird').innerHTML=chips('thirdParties');
 }
 async function renderSettings(){
   $('#setUrl').value=localStorage.url||'';$('#setToken').value=localStorage.token||'';
   const n=(await allP()).length;
   $('#syncStatus').textContent=`Pending: ${n}. Last sync: ${localStorage.lastSync?new Date(localStorage.lastSync).toLocaleString():'never'}.`+(localStorage.lastErr?` Last error: ${localStorage.lastErr}`:'');
-  renderChips();updateAdminStatus();
+  renderChips();
 }
-document.addEventListener('click',e=>{
+document.addEventListener('click',async e=>{
   const a=e.target.closest('.chip a');if(!a)return;e.preventDefault();
-  if(!isAdmin()){toast('Locked. Unlock admin mode first.');return}
+  const pin=await askPin('Enter the admin PIN to remove this saved value');
+  if(!pin)return;
   lists[a.dataset.k].splice(+a.dataset.i,1);S('lists',lists);localStorage.listsDirty='1';
-  fillLists();renderChips();pushLists();
+  fillLists();renderChips();pushLists(pin);
 });
 $('#saveSet').onclick=()=>{localStorage.url=$('#setUrl').value.trim();localStorage.token=$('#setToken').value.trim();toast('Settings saved');syncNow(true)};
 $('#syncBtn').onclick=()=>syncNow(true);
