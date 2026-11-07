@@ -8,12 +8,14 @@
 <title>Spending Tracker</title>
 <style>
 *{box-sizing:border-box}body{margin:0;font-family:system-ui,sans-serif;background:#f3f4f6;color:#111;padding-bottom:70px}
-header{background:#0f766e;color:#fff;padding:14px 16px;font-weight:700;font-size:18px;display:flex;justify-content:space-between}
+header{background:#0f766e;color:#fff;padding:14px 16px;font-weight:700;font-size:18px;display:flex;justify-content:space-between;align-items:center}
+#net.off{background:#dc2626;color:#fff;padding:2px 10px;border-radius:6px;font-size:14px}
 #banner{display:none;background:#b91c1c;color:#fff;padding:10px 16px;font-size:14px}
 section{display:none;padding:14px}section.on{display:block}
 label{display:block;font-size:13px;font-weight:600;margin:12px 0 4px}
 input,select,button{font:inherit;padding:11px;border:1px solid #cbd5e1;border-radius:8px;width:100%;background:#fff}
 button{background:#0f766e;color:#fff;border:0;font-weight:600}button.sec{background:#e2e8f0;color:#111}button.red{background:#b91c1c}
+button:disabled{opacity:.6}
 .row{display:flex;gap:8px}.row>*{flex:1}.row>button{flex:0 0 80px}
 .lnk{color:#2563eb;font-size:13px;display:inline-block;margin-top:6px;text-decoration:underline}
 .card{background:#fff;border-radius:10px;padding:10px 12px;margin:8px 0;font-size:14px}
@@ -26,6 +28,10 @@ nav button{background:none;color:#475569;border-radius:0;border:0;padding:16px 0
 #toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#111;color:#fff;padding:10px 16px;border-radius:8px;display:none;z-index:9}
 .err{color:#b91c1c;font-size:13px;margin-top:8px}
 .adm{background:#fff;border-radius:10px;padding:10px 12px;margin-top:16px}
+#lock{position:fixed;inset:0;background:#0f766e;z-index:100;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;gap:12px;color:#fff}
+#lock input{width:220px;text-align:center;font-size:24px;letter-spacing:8px}
+#lock button{width:220px;background:#fff;color:#0f766e}
+#lockMsg{color:#fecaca;font-size:14px;min-height:18px}
 </style></head><body>
 <header><span>Spending Tracker</span><span id="net"></span></header>
 <div id="banner"></div>
@@ -78,9 +84,11 @@ nav button{background:none;color:#475569;border-radius:0;border:0;padding:16px 0
     <option value="3m">Last 3 months</option><option value="custom">Custom</option>
   </select>
   <div class="row" id="customBox" style="display:none;margin-top:8px"><input type="date" id="from"><input type="date" id="to"></div>
+  <button id="loadHist" style="margin-top:10px">Load history</button>
   <div id="histNote" class="err"></div>
   <div class="tot"><div>Total spending: <span id="totA">0.00 MAD</span></div><div>Total waste: <span id="totW">0.00 MAD</span></div></div>
-  <div class="row"><button class="sec" id="expCsv">Export CSV</button><button class="sec" id="expTxt">Export TXT</button></div>
+  <div class="row" id="expRow" style="display:none"><button class="sec" id="expCsv">Export CSV</button><button class="sec" id="expTxt">Export TXT</button></div>
+  <div id="admNote" style="font-size:12px;color:#475569;margin:8px 0"></div>
   <div id="list"></div>
 </section>
 
@@ -97,6 +105,13 @@ nav button{background:none;color:#475569;border-radius:0;border:0;padding:16px 0
     <div id="adminMsg" class="err"></div>
   </div>
 
+  <div class="adm">
+    <b>App lock</b>
+    <div class="row" style="margin-top:8px"><input id="oldPin" type="password" inputmode="numeric" maxlength="4" placeholder="Current PIN"><input id="newPin" type="password" inputmode="numeric" maxlength="4" placeholder="New PIN"></div>
+    <button class="sec" id="chgPin" type="button" style="margin-top:8px">Change app PIN</button>
+    <div id="chgMsg" class="err"></div>
+  </div>
+
   <label>Saved locations <span style="font-weight:400;color:#475569">(unlock admin mode to remove)</span></label><div id="chipsLoc"></div>
   <label>Saved third parties</label><div id="chipsThird"></div>
   <button id="syncBtn" style="margin-top:16px">Sync now</button>
@@ -105,6 +120,16 @@ nav button{background:none;color:#475569;border-radius:0;border:0;padding:16px 0
 
 <nav><button data-tab="input" class="on">Input</button><button data-tab="history">History</button><button data-tab="settings">Settings</button></nav>
 <div id="toast"></div>
+
+<div id="lock">
+  <div style="font-size:22px;font-weight:700">Spending Tracker</div>
+  <div id="lockTitle"></div>
+  <input id="lockPin" type="password" inputmode="numeric" maxlength="4" placeholder="----" autocomplete="off">
+  <input id="lockPin2" type="password" inputmode="numeric" maxlength="4" placeholder="repeat" autocomplete="off" style="display:none">
+  <button id="lockGo" type="button">OK</button>
+  <div id="lockMsg"></div>
+  <div id="lockHelp" style="font-size:12px;opacity:.8;max-width:260px;text-align:center;display:none">Forgot the PIN? The only reset is clearing this app's data in Chrome, which deletes any unsynced entries.</div>
+</div>
 
 <script>
 const $=s=>document.querySelector(s);
@@ -130,7 +155,55 @@ const allP=()=>tx('readonly',s=>s.getAll());
 
 /* ---------- state ---------- */
 let lists=J('lists',{locations:[],thirdParties:[]});
-let editId=null,editRemote=false,editFile='',receipt=null,remote=[],offline=false;
+let editId=null,editRemote=false,editFile='',receipt=null,remote=[],offline=false,histLoaded=false;
+
+/* ---------- app lock (PIN checked on the phone) ---------- */
+async function hashPin(pin,salt){
+  const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(salt+':'+pin));
+  return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');
+}
+function showLock(){
+  const setup=!localStorage.lockHash;
+  $('#lock').style.display='flex';
+  $('#lockTitle').textContent=setup?'Create a 4-digit app PIN':'Enter your PIN';
+  $('#lockPin2').style.display=setup?'block':'none';
+  $('#lockHelp').style.display=setup?'none':'block';
+  $('#lockPin').value='';$('#lockPin2').value='';$('#lockMsg').textContent='';
+  lockAdmin();
+  setTimeout(()=>$('#lockPin').focus(),100);
+}
+$('#lockGo').onclick=async()=>{
+  const p=$('#lockPin').value.trim(),m=$('#lockMsg');
+  if(!/^\d{4}$/.test(p)){m.textContent='Enter 4 digits.';return}
+  if(!localStorage.lockHash){
+    if(p!==$('#lockPin2').value.trim()){m.textContent='The two PINs do not match.';return}
+    const salt=crypto.randomUUID();localStorage.lockSalt=salt;localStorage.lockHash=await hashPin(p,salt);
+    $('#lock').style.display='none';return;
+  }
+  const wait=Number(localStorage.lockUntil||0)-Date.now();
+  if(wait>0){m.textContent=`Too many tries. Wait ${Math.ceil(wait/1000)} s.`;return}
+  if(await hashPin(p,localStorage.lockSalt)===localStorage.lockHash){
+    localStorage.lockFails=0;$('#lock').style.display='none';
+  }else{
+    const f=Number(localStorage.lockFails||0)+1;localStorage.lockFails=f;
+    if(f>=5){localStorage.lockFails=0;localStorage.lockUntil=Date.now()+60000;m.textContent='Wrong PIN. Locked for 60 seconds.'}
+    else m.textContent='Wrong PIN.';
+    $('#lockPin').value='';
+  }
+};
+['#lockPin','#lockPin2'].forEach(s=>$(s).addEventListener('keydown',e=>{if(e.key==='Enter')$('#lockGo').click()}));
+let hiddenAt=0;
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden)hiddenAt=Date.now();
+  else if(hiddenAt&&Date.now()-hiddenAt>120000&&localStorage.lockHash)showLock();
+});
+$('#chgPin').onclick=async()=>{
+  const o=$('#oldPin').value.trim(),n=$('#newPin').value.trim(),m=$('#chgMsg');
+  if(!/^\d{4}$/.test(o)||!/^\d{4}$/.test(n)){m.textContent='Both PINs must be 4 digits.';return}
+  if(await hashPin(o,localStorage.lockSalt)!==localStorage.lockHash){m.textContent='Current PIN is wrong.';return}
+  const salt=crypto.randomUUID();localStorage.lockSalt=salt;localStorage.lockHash=await hashPin(n,salt);
+  $('#oldPin').value='';$('#newPin').value='';m.textContent='';toast('App PIN changed');
+};
 
 /* ---------- admin mode (PIN kept in memory only) ---------- */
 let adminPin='',adminUntil=0;
@@ -167,7 +240,7 @@ $('#adminUnlock').onclick=async()=>{
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));
   document.querySelectorAll('section').forEach(s=>s.classList.toggle('on',s.id==='tab-'+b.dataset.tab));
-  if(b.dataset.tab==='history')loadHistory();
+  if(b.dataset.tab==='history'){histLoaded=false;renderHistory()}
   if(b.dataset.tab==='settings')renderSettings();
 });
 const goTab=n=>document.querySelector(`nav button[data-tab=${n}]`).click();
@@ -278,6 +351,7 @@ $('#validate').onclick=async()=>{
 
 /* ---------- history ---------- */
 async function loadHistory(){
+  const btn=$('#loadHist');btn.textContent='Loading...';btn.disabled=true;
   offline=false;
   if(navigator.onLine&&localStorage.url){
     try{const r=await api('list');if(!r.ok)throw new Error(r.error);
@@ -285,8 +359,10 @@ async function loadHistory(){
       if(!localStorage.listsDirty){lists=r.lists;S('lists',lists);fillLists()}
     }catch(e){offline=true;remote=[]}
   }else{offline=true;remote=[]}
+  histLoaded=true;btn.disabled=false;
   renderHistory();
 }
+$('#loadHist').onclick=loadHistory;
 function viewData(){
   return allP().then(p=>{
     const m=new Map(remote.map(r=>[r.id,r]));
@@ -307,24 +383,33 @@ function getRange(){
 let view=[];
 async function renderHistory(){
   $('#customBox').style.display=$('#range').value==='custom'?'flex':'none';
+  $('#loadHist').textContent=histLoaded?'Reload history':'Load history';
+  if(!histLoaded){
+    view=[];$('#histNote').textContent='';$('#expRow').style.display='none';$('#admNote').textContent='';
+    $('#totA').textContent=fmt(0);$('#totW').textContent=fmt(0);
+    $('#list').innerHTML='<p style="color:#475569">Choose a range, then tap Load history.</p>';
+    return;
+  }
+  $('#expRow').style.display='flex';
   $('#histNote').textContent=offline?'Offline or not connected: showing pending entries only. Synced history is unavailable.':'';
+  const adm=isAdmin();
+  $('#admNote').textContent=adm?'':'Note: editing or deleting saved entries requires admin mode (activate it in Settings).';
   const[a,b]=getRange();
   view=(await viewData()).filter(r=>r.date>=a&&r.date<=b);
   $('#totA').textContent=fmt(view.reduce((s,r)=>s+r.amount,0));
   $('#totW').textContent=fmt(view.reduce((s,r)=>s+(r.waste||0),0));
-  const adm=isAdmin();
-  $('#list').innerHTML=view.map(r=>{const lk=r.remote&&!adm?' \u{1F512}':'';
-    return `<div class="card"><div class="top"><span>${esc(r.date)} ${esc(dayName(r.date))}</span><span>${fmt(r.amount)}</span></div>
+  $('#list').innerHTML=view.map(r=>
+    `<div class="card"><div class="top"><span>${esc(r.date)} ${esc(dayName(r.date))}</span><span>${fmt(r.amount)}</span></div>
     <div>${esc(r.object)} ${r.pending?'<span class="badge">pending</span>':''}</div>
     <div style="color:#475569">${esc(r.location||'-')} / ${esc(r.thirdParty||'-')} / waste ${fmt(r.waste||0)}</div>
     ${r.file?`<a href="${esc(r.file)}" target="_blank" rel="noopener">Receipt</a>`:(r.receipt?'Receipt attached':'')}
-    <div class="row" style="margin-top:8px"><button class="sec" data-act="edit" data-id="${esc(r.id)}">Edit${lk}</button><button class="red" data-act="del" data-id="${esc(r.id)}">Delete${lk}</button></div></div>`}).join('')||'<p>No entries.</p>';
+    <div class="row" style="margin-top:8px"><button class="sec" data-act="edit" data-id="${esc(r.id)}">Edit</button><button class="red" data-act="del" data-id="${esc(r.id)}">Delete</button></div></div>`).join('')||'<p>No entries.</p>';
 }
 ['range','from','to'].forEach(i=>$('#'+i).onchange=renderHistory);
 $('#list').onclick=async e=>{
   const b=e.target.closest('button');if(!b)return;
   const r=view.find(x=>x.id===b.dataset.id);if(!r)return;
-  if(r.remote&&!isAdmin()){toast('Locked. Unlock admin mode in Settings.');return}
+  if(r.remote&&!isAdmin()){toast('Requires admin mode. Activate it in Settings.');return}
   if(b.dataset.act==='del'){
     if(!confirm('Delete this entry?'))return;
     if(r.remote)await putP({id:r.id,op:'delete',remote:true});else await delP(r.id);
@@ -374,13 +459,15 @@ async function syncNow(manual){
     localStorage.lastErr=blocked?blocked+'. Unlock admin mode in Settings to finish syncing.':'';
   }catch(e){localStorage.lastErr=e.message||String(e)}
   syncing=false;refreshBanner();renderSettings();
-  if($('#tab-history').classList.contains('on'))loadHistory();
+  if($('#tab-history').classList.contains('on')&&histLoaded)loadHistory();
 }
 async function refreshBanner(){
   const n=(await allP()).length,b=$('#banner');
   b.style.display=n?'block':'none';
   b.textContent=`Warning: ${n} unsynced ${n===1?'entry':'entries'}. Do not uninstall the app or clear its data until they sync.`;
-  $('#net').textContent=navigator.onLine?'online':'offline';
+  const on=navigator.onLine;
+  $('#net').textContent=on?'online':'offline';
+  $('#net').classList.toggle('off',!on);
 }
 function renderChips(){
   const adm=isAdmin();
@@ -405,6 +492,7 @@ window.addEventListener('online',()=>{refreshBanner();syncNow()});
 window.addEventListener('offline',refreshBanner);
 
 /* ---------- start ---------- */
+showLock();
 fillLists();resetForm();refreshBanner();renderSettings();
 if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js');
